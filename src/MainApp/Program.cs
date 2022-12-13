@@ -37,20 +37,27 @@ class Player
         public Cell BottomLeft { get; }
         public Cell BottomRight { get; }
 
-        public int DistanceFromCenter(Cell t)
-        {
-            int horizontal = Math.Abs(Width / 2 - t.x);
-            int vertical = Math.Abs(Height / 2 - t.y);
-
-            return horizontal + vertical;
-        }
-
         public int DistanceBetween(Cell a, Cell b)
         {
             int horizontal = Math.Abs(a.x - b.x);
             int vertical = Math.Abs(a.y - b.y);
 
             return horizontal + vertical;
+        }
+
+        public IEnumerable<Tile> NeighborsOf(Tile t)
+        {
+            var allTiles = Tiles.ToArray();
+
+            var neighbors = new List<Tile>();
+            int index = t.x + t.y * (Width - 1);
+
+            if (t.y > 0) neighbors.Add(allTiles[index - Width]);
+            if (t.x > 0) neighbors.Add(allTiles[index - 1]);
+            if (t.x < Width - 1) neighbors.Add(allTiles[index + 1]);
+            if (t.y < Height - 1) neighbors.Add(allTiles[index + Width]);
+
+            return neighbors;
         }
 
         public List<Tile> Tiles { get; } = new();
@@ -67,7 +74,9 @@ class Player
 
 
         public IEnumerable<Tile> MyUnits => MyTiles.Where(t => t.units > 0);
+        public int MyTotalUnits => MyUnits.Sum(x => x.units);
         public IEnumerable<Tile> EnemyUnits => EnemyTiles.Where(t => t.units > 0);
+        public int EnemyTotalUnits => EnemyUnits.Sum(x => x.units);
 
         public IEnumerable<Tile> SpawnableTiles => Tiles.Where(t => t.canSpawn);
         public IEnumerable<Tile> BuildableTiles => Tiles.Where(t => t.canBuild);
@@ -150,10 +159,12 @@ class Player
         inputs = Console.ReadLine().Split(' ');
         int width = int.Parse(inputs[0]);
         int height = int.Parse(inputs[1]);
+        int turn = 0;
 
         // game loop
         while (true)
         {
+            turn++;
             var gameState = new GameState(width, height);
             var actions = new List<GameAction>();
             inputs = Console.ReadLine().Split(' ');
@@ -193,31 +204,50 @@ class Player
                 // send unit closest to corner to that corner
                 //if(unit == gameState.MyUnits.OrderByDescending(u => gameState.DistanceBetween(unit, gameState.TopLeft)))
 
-                var closestCell = gameState.NotMyTiles
+                var closestCells = gameState.NotMyTiles
                                     .OrderBy(t => gameState.DistanceBetween(unit, t))
-                                    .FirstOrDefault();
+                                    .Take(4)
+                                    .ToList();
                 //                                    .FirstOrDefault(t => !destinationCells.Contains(t));
-                if (closestCell != null)
+                if (closestCells != null)
                 {
-                    destinationCells.Add(closestCell);
-                    actions.Add(new Move(unit.units, unit.x, unit.y, closestCell.x, closestCell.y));
+                    int unitsMoved = 0;
+                    foreach (var cell in closestCells)
+                    {
+                        if (unitsMoved < unit.units)
+                        {
+                            int unitsToMove = Math.Max(1, unit.units / 4);
+                            actions.Add(new Move(unitsToMove, unit.x, unit.y, cell.x, cell.y));
+                            unitsMoved += unitsToMove;
+                            destinationCells.Add(cell);
+                        }
+                    }
                 }
+            }
 
 
-                // var destination = gameState.NotMyTiles.Skip(unitNumber).FirstOrDefault();
-                // if(destination != null)
-                // {
-                //     var command = new Move(1, unit.x, unit.y, destination.x, destination.y);
-                //     actions.Add(command);
-                // } else {
-                //     destination = gameState.NeutralTiles.Skip(unitNumber).FirstOrDefault();
-                //     if(destination != null)
-                //     {
-                //         var command = new Move(1, unit.x, unit.y, destination.x, destination.y);
-                //         actions.Add(command);
-                //     }
-                // }
-                // unitNumber++;
+
+            // BUILD
+            //if (gameState.MyRecyclers.Count() <= gameState.EnemyRecyclers.Count()) // don't need these
+
+            int advantage = gameState.MyTotalUnits - gameState.EnemyTotalUnits;
+            if (turn > 0 &&
+                (turn < 12 || advantage < 1) &&
+                myMatter >= 10)
+            {
+                var location = gameState.BuildableTiles.ToList()
+                    .Where(t => t.x > 0 && t.y > 0 && t.x < gameState.Width - 1 && t.y < gameState.Height - 1) // not on edges
+                    .Where(t => !gameState.MyRecyclers.Any(r => gameState.DistanceBetween(t, r) <= 3)) // more than 3 away from existing recyclers
+                    .OrderByDescending(t => gameState.DistanceFromNearestEnemyUnit(t))
+                    .FirstOrDefault(t => !destinationCells.Contains(t));
+
+                if (location != null)
+                {
+                    var command = new Build(location.x, location.y);
+                    //destinationCells.Add(new Cell(location.x, location.y));
+                    myMatter -= 10;
+                    actions.Add(command);
+                }
             }
 
             // SPAWN
@@ -235,25 +265,11 @@ class Player
 
 
 
-            // BUILD
-            if (gameState.MyRecyclers.Count() <= gameState.EnemyRecyclers.Count() && myMatter >= 100) // don't need these
-            {
-                var location = gameState.BuildableTiles.ToList()
-                    .OrderByDescending(t => t.scrapAmount)
-                    .FirstOrDefault(t => !t.inRangeOfRecycler);
-
-                if (location != null)
-                {
-                    var command = new Build(location.x, location.y);
-                    destinationCells.Add(new Cell(location.x, location.y));
-                    actions.Add(command);
-                }
-            }
 
             var actionsString = string.Join(';', actions.Select(a => a.ToString()));
             if (actionsString.Any())
             {
-                actionsString += $";MESSAGE Bots: {gameState.MyUnits.Sum(x => x.units)} - {gameState.EnemyUnits.Sum(x => x.units)}";
+                actionsString += $";MESSAGE Bots: {gameState.MyTotalUnits} - {gameState.EnemyTotalUnits}";
                 Console.WriteLine(actionsString);
             }
             else
