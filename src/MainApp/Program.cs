@@ -37,6 +37,8 @@ class Player
         public Cell BottomLeft { get; }
         public Cell BottomRight { get; }
 
+        public int MyGameEdgeXValue { get; set; } = 0;
+
         public int DistanceBetween(Cell a, Cell b)
         {
             int horizontal = Math.Abs(a.x - b.x);
@@ -59,6 +61,8 @@ class Player
 
             return neighbors;
         }
+
+        public List<Tile> FriendlyMoveDestinations { get; } = new();
 
         public List<Tile> Tiles { get; } = new();
 
@@ -160,6 +164,7 @@ class Player
         int width = int.Parse(inputs[0]);
         int height = int.Parse(inputs[1]);
         int turn = 0;
+        int myGameEdgeXValue = 0;
 
         // game loop
         while (true)
@@ -188,6 +193,20 @@ class Player
                 }
             }
 
+            // determine which edge is my side (left or right)
+            if (turn == 1)
+            {
+                if (gameState.MyTiles.First().x < width / 2)
+                {
+                    myGameEdgeXValue = 0;
+                }
+                else
+                {
+                    myGameEdgeXValue = height - 1;
+                }
+            }
+            gameState.MyGameEdgeXValue = myGameEdgeXValue;
+
             // Write an action using Console.WriteLine()
             // To debug: Console.Error.WriteLine("Debug messages...");
 
@@ -198,15 +217,18 @@ class Player
             // Tile bottomRightNotMine = gameState.NotMyTiles.OrderBy(t => gameState.DistanceBetween(gameState.BottomRight, t)).FirstOrDefault();
 
             //int unitNumber = 0;
-            var destinationCells = new List<Cell>();
+
             foreach (var unit in gameState.MyUnits)
             {
                 // send unit closest to corner to that corner
                 //if(unit == gameState.MyUnits.OrderByDescending(u => gameState.DistanceBetween(unit, gameState.TopLeft)))
 
-                var closestCells = gameState.NotMyTiles
+                // try exploring or just fighting?
+                int destinationCount = 2;
+                var closestCells = gameState.EnemyTiles
+                                    .Where(t => !(t.scrapAmount == 1 && t.inRangeOfRecycler)) // don't move to death zone
                                     .OrderBy(t => gameState.DistanceBetween(unit, t))
-                                    .Take(4)
+                                    .Take(destinationCount)
                                     .ToList();
                 //                                    .FirstOrDefault(t => !destinationCells.Contains(t));
                 if (closestCells != null)
@@ -216,10 +238,10 @@ class Player
                     {
                         if (unitsMoved < unit.units)
                         {
-                            int unitsToMove = Math.Max(1, unit.units / 4);
+                            int unitsToMove = Math.Max(1, unit.units / destinationCount);
                             actions.Add(new Move(unitsToMove, unit.x, unit.y, cell.x, cell.y));
                             unitsMoved += unitsToMove;
-                            destinationCells.Add(cell);
+                            gameState.FriendlyMoveDestinations.Add(cell);
                         }
                     }
                 }
@@ -235,11 +257,7 @@ class Player
                 (turn < 12 || advantage < 1) &&
                 myMatter >= 10)
             {
-                var location = gameState.BuildableTiles.ToList()
-                    .Where(t => t.x > 0 && t.y > 0 && t.x < gameState.Width - 1 && t.y < gameState.Height - 1) // not on edges
-                    .Where(t => !gameState.MyRecyclers.Any(r => gameState.DistanceBetween(t, r) <= 3)) // more than 3 away from existing recyclers
-                    .OrderByDescending(t => gameState.DistanceFromNearestEnemyUnit(t))
-                    .FirstOrDefault(t => !destinationCells.Contains(t));
+                var location = new SpreadOutRecyclerStrategy().GetBuildLocations(gameState).FirstOrDefault();
 
                 if (location != null)
                 {
@@ -255,7 +273,7 @@ class Player
             {
                 var location = gameState.SpawnableTiles.ToList()
                                 .OrderBy(t => gameState.DistanceFromNearestEnemyUnit(t))
-                                .FirstOrDefault(t => !destinationCells.Contains(t));
+                                .FirstOrDefault();
                 if (location != null)
                 {
                     var command = new Spawn((myMatter) / 10, location.x, location.y);
@@ -279,4 +297,34 @@ class Player
 
         }
     }
+
+    public interface IRecyclerStrategy
+    {
+        IEnumerable<Player.Tile> GetBuildLocations(GameState gameState);
+    }
+
+    public class SpreadOutRecyclerStrategy : IRecyclerStrategy
+    {
+        public IEnumerable<Player.Tile> GetBuildLocations(GameState gameState)
+        {
+            var location = gameState.BuildableTiles.ToList()
+                    .Where(t => t.x > 0 && t.y > 0 && t.x < gameState.Width - 1 && t.y < gameState.Height - 1) // not on edges
+                    .Where(t => !gameState.MyRecyclers.Any(r => gameState.DistanceBetween(t, r) <= 3)) // more than 3 away from existing recyclers
+                    .OrderByDescending(t => gameState.DistanceFromNearestEnemyUnit(t))
+                    .FirstOrDefault(t => !gameState.FriendlyMoveDestinations.Contains(t));
+
+            yield return location;
+        }
+    }
+
+    // Encircle strategy
+    // MOVE
+    // IF enemy unit is reachable
+    //   IF enemy is outnumbered OR more than 2 moves away: MOVE toward enemy
+    //   ELSE (we are close) move AROUND enemy (if enemy is lower left, move left or south, etc.)
+    //
+    // BUILD
+    // IF enemy units near my edge are adjacent to my tiles
+    //   GET ALL MY EMPTY TILES WITH ENEMY ADJACENT ORDER BY distance to my edge
+    // BUILD as many recyclers as I can (even trying to build more than I have)
 }
