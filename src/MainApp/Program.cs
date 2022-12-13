@@ -71,6 +71,14 @@ class Player
 
         public IEnumerable<Tile> SpawnableTiles => Tiles.Where(t => t.canSpawn);
         public IEnumerable<Tile> BuildableTiles => Tiles.Where(t => t.canBuild);
+
+        public int DistanceFromNearestEnemyUnit(Tile t)
+        {
+            var nearest = EnemyUnits.OrderBy(eu => DistanceBetween(t, eu)).FirstOrDefault();
+            if (nearest == null) return 100;
+
+            return DistanceBetween(t, nearest);
+        }
     }
 
     public abstract class GameAction
@@ -192,7 +200,7 @@ class Player
                 if (closestCell != null)
                 {
                     destinationCells.Add(closestCell);
-                    actions.Add(new Move(1, unit.x, unit.y, closestCell.x, closestCell.y));
+                    actions.Add(new Move(unit.units, unit.x, unit.y, closestCell.x, closestCell.y));
                 }
 
 
@@ -216,11 +224,11 @@ class Player
             if (myMatter > 10)
             {
                 var location = gameState.SpawnableTiles.ToList()
-                                .OrderBy(t => gameState.DistanceFromCenter(t))
+                                .OrderBy(t => gameState.DistanceFromNearestEnemyUnit(t))
                                 .FirstOrDefault(t => !destinationCells.Contains(t));
                 if (location != null)
                 {
-                    var command = new Spawn((myMatter - 10) / 10, location.x, location.y);
+                    var command = new Spawn((myMatter) / 10, location.x, location.y);
                     actions.Add(command);
                 }
             }
@@ -228,7 +236,7 @@ class Player
 
 
             // BUILD
-            if (gameState.MyRecyclers.Count() <= gameState.EnemyRecyclers.Count() && myMatter >= 10)
+            if (gameState.MyRecyclers.Count() <= gameState.EnemyRecyclers.Count() && myMatter >= 100) // don't need these
             {
                 var location = gameState.BuildableTiles.ToList()
                     .OrderByDescending(t => t.scrapAmount)
